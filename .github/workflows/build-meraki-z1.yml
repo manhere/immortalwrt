@@ -1,0 +1,76 @@
+name: Build Meraki Z1 Firmware
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          df -hT
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison g++ gawk gcc \
+            make gettext git libncurses-dev libssl-dev rsync unzip zlib1g-dev \
+            file wget python3 python3-distutils 2>/dev/null || \
+          sudo apt-get install -y build-essential clang flex bison g++ gawk gcc \
+            make gettext git libncurses-dev libssl-dev rsync unzip zlib1g-dev \
+            file wget python3
+
+      - name: Update & install feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Configure (ath79/nand, Meraki Z1)
+        run: |
+          make defconfig
+          cat >> .config <<'EOF'
+          CONFIG_TARGET_ath79=y
+          CONFIG_TARGET_ath79_nand=y
+          CONFIG_TARGET_ath79_nand_DEVICE_meraki_z1=y
+          EOF
+          make defconfig
+          grep -E "^(CONFIG_TARGET_ath79|CONFIG_TARGET_BOARD)" .config
+
+      - name: Download packages
+        run: |
+          make download -j$(nproc) || make download -j1 V=s
+
+      - name: Compile firmware
+        run: |
+          echo "CPU threads: $(nproc)"
+          make -j$(nproc) || make -j1 V=s
+          df -hT
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-meraki-z1
+          path: |
+            bin/targets/ath79/nand/*meraki_z1*
+            bin/targets/ath79/nand/sha256sums
+            .config
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            logs/
+            bin/targets/**/logs/
+          if-no-files-found: ignore
+          retention-days: 7
