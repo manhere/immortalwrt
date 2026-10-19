@@ -6,6 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
       - name: Checkout
@@ -49,8 +50,34 @@ jobs:
 
       - name: Compile firmware
         run: |
+          set -o pipefail
           echo "CPU threads: $(nproc)"
-          make -j$(nproc) || make -j1 V=s
+          rm -f build.log
+          make -j$(nproc) 2>&1 | tee build.log &
+          MAKE_PID=$!
+          # Watchdog: every 5 min print last log lines + disk/mem/process state,
+          # so a silent stall (e.g. a tool waiting on stdin) becomes visible.
+          for i in $(seq 1 180); do
+            sleep 60
+            kill -0 $MAKE_PID 2>/dev/null || break
+            if [ $((i % 5)) -eq 0 ]; then
+              echo "===== heartbeat $(date -u +%H:%M) UTC ====="
+              echo "--- last log lines:"
+              tail -2 build.log || true
+              echo "--- disk / memory / top processes:"
+              df -h / | tail -1
+              free -h | sed -n '2p'
+              ps -eo pcpu,pmem,etime,comm --sort=-pcpu | head -8
+            fi
+          done
+          wait $MAKE_PID || RC=$?
+          RC=${RC:-0}
+          if [ "$RC" -ne 0 ]; then
+            echo "::warning::parallel build failed (rc=$RC), retrying with -j1 V=s"
+            make -j1 V=s 2>&1 | tee -a build.log
+          fi
+          echo "=== tail of build log ==="
+          tail -15 build.log
           df -hT
 
       - name: Upload firmware
@@ -64,13 +91,13 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      - name: Upload build logs on failure
-        if: failure()
+      - name: Upload build logs on failure or cancellation
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
           path: |
+            build.log
             logs/
-            bin/targets/**/logs/
           if-no-files-found: ignore
           retention-days: 7
