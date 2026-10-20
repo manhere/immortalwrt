@@ -42,6 +42,7 @@ jobs:
           CONFIG_TARGET_ath79_nand_DEVICE_meraki_z1=y
           CONFIG_PACKAGE_luci=y
           CONFIG_LUCI_LANG_zh_Hans=y
+          CONFIG_PACKAGE_swconfig=y
           EOF
           make defconfig
           grep -E "^(CONFIG_TARGET_ath79|CONFIG_TARGET_BOARD)" .config
