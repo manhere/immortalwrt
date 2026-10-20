@@ -35,8 +35,12 @@ jobs:
 
       - name: Configure (ath79/nand, Meraki Z1)
         run: |
-          make defconfig
-          cat >> .config <<'EOF'
+          # Write target+packages into a FRESH .config, then expand once.
+          # (Never defconfig-then-append: the first defconfig materializes the
+          # kconfig default target (mediatek) and its full package set, and the
+          # appended target lines then fight a polluted choice state -- which
+          # silently dropped DEFAULT_PACKAGES entries like swconfig.)
+          cat > .config <<'EOF'
           CONFIG_TARGET_ath79=y
           CONFIG_TARGET_ath79_nand=y
           CONFIG_TARGET_ath79_nand_DEVICE_meraki_z1=y
@@ -46,6 +50,11 @@ jobs:
           EOF
           make defconfig
           grep -E "^(CONFIG_TARGET_ath79|CONFIG_TARGET_BOARD)" .config
+          # Hard-fail early if key packages are not selected (would build an
+          # image without LuCI / without swconfig VLAN tooling again).
+          grep -q "^CONFIG_PACKAGE_swconfig=y" .config || { echo "::error::CONFIG_PACKAGE_swconfig not selected"; exit 1; }
+          grep -q "^CONFIG_PACKAGE_luci=y" .config || { echo "::error::CONFIG_PACKAGE_luci not selected"; exit 1; }
+          grep -E "^CONFIG_PACKAGE_(swconfig|luci|uhttpd)=" .config
 
       - name: Download packages
         run: |
